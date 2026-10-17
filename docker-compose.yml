@@ -1,0 +1,71 @@
+version: '3.8'
+services:
+  postgres-db:
+    image: postgres:15-alpine
+    container_name: aerobook-postgres
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: aerobook
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+
+  user-service:
+    build: ./services/user-service
+    ports: ["3001:3000"]
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://user_svc:user_pass@postgres-db:5432/aerobook
+    depends_on: [postgres-db]
+
+  flight-search-service:
+    build: ./services/flight-search-service
+    ports: ["3002:3000"]
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://search_svc:search_pass@postgres-db:5432/aerobook
+    depends_on: [postgres-db]
+
+  booking-service:
+    build: ./services/booking-service
+    ports: ["3003:3000"]
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://booking_svc:booking_pass@postgres-db:5432/aerobook
+    depends_on: [postgres-db]
+
+  payment-service:
+    build: ./services/payment-service
+    ports: ["3004:3000"]
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://payment_svc:payment_pass@postgres-db:5432/aerobook
+    depends_on: [postgres-db]
+
+  notification-service:
+    build: ./services/notification-service
+    ports: ["3005:3000"]
+    environment:
+      - PORT=3000
+    depends_on: [postgres-db]
+
+  admin-service:
+    build: ./services/admin-service
+    ports: ["3006:3000"]
+    environment:
+      - PORT=3000
+      - DATABASE_URL=postgres://admin_svc:admin_pass@postgres-db:5432/aerobook
+    depends_on: [postgres-db]
+
+  frontend:
+    build: ./frontend
+    ports: ["80:80"]
+    depends_on:
+      - user-service
+      - flight-search-service
+
+volumes:
+  pgdata:

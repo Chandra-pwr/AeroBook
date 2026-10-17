@@ -1,0 +1,4 @@
+apiVersion: v2
+name: aerobook-ingress
+description: Domain Ingress gateway chart for devchandra.shop
+version: 0.1.0

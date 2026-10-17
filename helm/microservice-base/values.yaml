@@ -1,0 +1,17 @@
+replicaCount: 1
+image:
+  repository: docker.io/chandra/service
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 3000
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 200m
+    memory: 128Mi
+envSecretKey: ""
