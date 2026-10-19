@@ -1,0 +1,72 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  annotations:
+    alb.ingress.kubernetes.io/healthcheck-path: /
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"networking.k8s.io/v1","kind":"Ingress","metadata":{"annotations":{"alb.ingress.kubernetes.io/healthcheck-path":"/","alb.ingress.kubernetes.io/listen-ports":"[{\"HTTP\":80}]","alb.ingress.kubernetes.io/scheme":"internet-facing","alb.ingress.kubernetes.io/target-type":"ip"},"name":"aerobook-public","namespace":"aerobook"},"spec":{"ingressClassName":"alb","rules":[{"http":{"paths":[{"backend":{"service":{"name":"flight-search-service","port":{"number":80}}},"path":"/api/flights/search","pathType":"Exact"},{"backend":{"service":{"name":"aerobook-frontend","port":{"number":80}}},"path":"/","pathType":"Prefix"}]}}]}}
+  creationTimestamp: "2026-10-18T09:58:50Z"
+  finalizers:
+  - ingress.k8s.aws/resources
+  generation: 5
+  name: aerobook-public
+  namespace: aerobook
+  resourceVersion: "134800"
+  uid: 8a1228e9-7d4d-46ba-94ee-ce4997c07351
+spec:
+  ingressClassName: alb
+  rules:
+  - http:
+      paths:
+      - backend:
+          service:
+            name: user-service
+            port:
+              number: 80
+        path: /api/users/register
+        pathType: Exact
+      - backend:
+          service:
+            name: flight-search-service
+            port:
+              number: 80
+        path: /api/flights/search
+        pathType: Exact
+      - backend:
+          service:
+            name: aerobook-frontend
+            port:
+              number: 80
+        path: /
+        pathType: Prefix
+      - backend:
+          service:
+            name: booking-service
+            port:
+              number: 80
+        path: /api/bookings
+        pathType: Prefix
+      - backend:
+          service:
+            name: payment-service
+            port:
+              number: 80
+        path: /api/payments
+        pathType: Prefix
+      - backend:
+          service:
+            name: notification-service
+            port:
+              number: 80
+        path: /api/notifications
+        pathType: Prefix
+status:
+  loadBalancer:
+    ingress:
+    - hostname: k8s-aerobook-aerobook-541eca6f24-626010572.us-east-1.elb.amazonaws.com
+      ports:
+      - port: 80
+        protocol: ""

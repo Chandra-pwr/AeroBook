@@ -1,0 +1,86 @@
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json());
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'UP',
+    service: 'flight-search-service',
+    timestamp: new Date()
+  });
+});
+
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Welcome to flight-search-service on devchandra.shop',
+    timestamp: new Date()
+  });
+});
+
+const flights = [
+  {
+    id: 'AB101',
+    airline: 'AeroBook Air',
+    origin: 'DEL',
+    destination: 'BOM',
+    departure: '08:00',
+    arrival: '10:15',
+    price: 4500,
+    currency: 'INR'
+  },
+  {
+    id: 'AB202',
+    airline: 'AeroBook Air',
+    origin: 'DEL',
+    destination: 'BOM',
+    departure: '14:30',
+    arrival: '16:45',
+    price: 5200,
+    currency: 'INR'
+  },
+  {
+    id: 'AB303',
+    airline: 'AeroBook Air',
+    origin: 'BOM',
+    destination: 'BLR',
+    departure: '09:15',
+    arrival: '11:00',
+    price: 3800,
+    currency: 'INR'
+  }
+];
+
+app.get('/api/flights/search', (req, res) => {
+  const origin = String(req.query.origin || '').trim().toUpperCase();
+  const destination = String(req.query.destination || '').trim().toUpperCase();
+
+  if (!/^[A-Z]{3}$/.test(origin) || !/^[A-Z]{3}$/.test(destination)) {
+    return res.status(400).json({
+      error: 'origin and destination must be valid 3-letter airport codes, e.g. DEL and BOM'
+    });
+  }
+
+  if (origin === destination) {
+    return res.status(400).json({
+      error: 'Origin and destination must be different'
+    });
+  }
+
+  const results = flights.filter(
+    flight => flight.origin === origin && flight.destination === destination
+  );
+
+  return res.json({
+    origin,
+    destination,
+    count: results.length,
+    demo: true,
+    flights: results
+  });
+});
+
+app.listen(PORT, () => {
+  console.log(`flight-search-service running on port ${PORT}`);
+});
