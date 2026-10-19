@@ -1,0 +1,7 @@
+node_modules
+npm-debug.log*
+*.before-jwt-auth
+.env
+.env.*
+!.env.example
+.git

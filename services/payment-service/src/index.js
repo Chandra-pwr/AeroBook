@@ -1,17 +1,287 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
+const { Pool } = require('pg');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json());
+app.use(express.json({ limit: '20kb' }));
 
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'UP', service: 'payment-service', timestamp: new Date() });
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is required');
+}
+
+const dbUrl = new URL(process.env.DATABASE_URL);
+dbUrl.searchParams.delete('sslmode');
+dbUrl.searchParams.delete('uselibpqcompat');
+
+const pool = new Pool({
+  connectionString: dbUrl.toString(),
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 5000,
+  max: 10
+});
+
+
+function authenticateToken(req, res, next) {
+  const header = req.headers.authorization || '';
+  const match = header.match(/^Bearer\s+(\S+)$/i);
+
+  if (!match) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  if (!process.env.JWT_SECRET) {
+    console.error('JWT_SECRET is not configured');
+    return res.status(500).json({ error: 'Authentication is unavailable' });
+  }
+
+  try {
+    const payload = jwt.verify(match[1], process.env.JWT_SECRET, {
+      issuer: 'aerobook-user-service',
+      audience: 'aerobook-api'
+    });
+
+    if (typeof payload.sub !== 'string' || !/^[1-9]\d*$/.test(payload.sub)) {
+      return res.status(401).json({ error: 'Invalid authentication token' });
+    }
+
+    req.authUserId = payload.sub;
+    return next();
+  } catch (_) {
+    return res.status(401).json({
+      error: 'Invalid or expired authentication token'
+    });
+  }
+}
+
+app.get('/health', async (req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    res.json({
+      status: 'UP',
+      service: 'payment-service',
+      database: 'connected'
+    });
+  } catch (err) {
+    console.error('Health check failed:', err.message);
+    res.status(503).json({ status: 'DOWN', service: 'payment-service' });
+  }
 });
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Welcome to payment-service on devchandra.shop', timestamp: new Date() });
+  res.json({
+    message: 'Payment Service API',
+    mode: 'MOCK_ONLY',
+    realPaymentsEnabled: false
+  });
 });
 
-app.listen(PORT, () => {
-  console.log(`payment-service running on port ${PORT}`);
+async function createBookingNotification(booking, payment) {
+  const baseUrl = process.env.NOTIFICATION_URL ||
+    'http://notification-service.aerobook.svc.cluster.local';
+
+  const response = await fetch(`${baseUrl}/api/notifications`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(5000),
+    body: JSON.stringify({
+      bookingId: Number(booking.id),
+      userId: Number(booking.user_id),
+      flightId: booking.flight_id || undefined,
+      amount: Number(payment.amount),
+      currency: String(payment.currency).trim()
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`Notification service returned HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+app.post('/api/payments', authenticateToken, async (req, res) => {
+  const bookingId = Number(req.body.bookingId);
+
+  if (!Number.isSafeInteger(bookingId) || bookingId < 1) {
+    return res.status(400).json({ error: 'A valid bookingId is required' });
+  }
+
+  const client = await pool.connect();
+  let transactionStarted = false;
+
+  try {
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const bookingResult = await client.query(
+      `SELECT id, user_id, flight_id, price, currency, status
+       FROM booking_data.bookings
+       WHERE id = $1`,
+      [bookingId]
+    );
+
+    if (bookingResult.rowCount === 0) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      return res.status(404).json({ error: 'Booking not found' });
+    }
+
+    const booking = bookingResult.rows[0];
+
+    if (String(booking.user_id) !== req.authUserId) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      return res.status(403).json({
+        error: 'You cannot pay for this booking'
+      });
+    }
+
+    if (booking.status === 'CANCELLED') {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      return res.status(409).json({
+        error: 'Cannot pay for a cancelled booking'
+      });
+    }
+
+    const inserted = await client.query(
+      `INSERT INTO payment_data.payments
+         (booking_id, user_id, amount, currency, status, payment_method)
+       VALUES ($1, $2, $3, $4, 'SUCCEEDED', 'MOCK')
+       ON CONFLICT (booking_id) DO NOTHING
+       RETURNING id, booking_id, user_id, amount, currency,
+                 status, payment_method, created_at`,
+      [booking.id, booking.user_id, booking.price, booking.currency.trim()]
+    );
+
+    let payment = inserted.rows[0];
+    const alreadyExisted = !payment;
+
+    if (!payment) {
+      const existing = await client.query(
+        `SELECT id, booking_id, user_id, amount, currency,
+                status, payment_method, created_at
+         FROM payment_data.payments
+         WHERE booking_id = $1`,
+        [bookingId]
+      );
+
+      payment = existing.rows[0];
+
+      if (!payment) {
+        throw new Error('Payment record missing after conflict');
+      }
+    }
+
+    if (payment.status !== 'SUCCEEDED') {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      return res.status(409).json({
+        error: 'Existing payment is not successful',
+        payment
+      });
+    }
+
+    await client.query(
+      `UPDATE booking_data.bookings
+       SET status = 'CONFIRMED'
+       WHERE id = $1 AND status = 'PENDING'`,
+      [bookingId]
+    );
+
+    await client.query('COMMIT');
+    transactionStarted = false;
+
+    let notificationResult = null;
+    let notificationError = null;
+
+    try {
+      notificationResult = await createBookingNotification(booking, payment);
+    } catch (err) {
+      notificationError = err.message;
+      console.error('Notification delivery failed:', err.message);
+    }
+
+    return res.status(alreadyExisted ? 200 : 201).json({
+      message: alreadyExisted
+        ? 'Existing mock payment returned; no new payment created'
+        : 'Mock payment simulated; booking confirmed; no real money charged',
+      payment,
+      bookingStatus: 'CONFIRMED',
+      notification: notificationResult,
+      notificationError,
+      realPayment: false
+    });
+  } catch (err) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (_) {}
+    }
+
+    console.error('Payment creation failed:', err.message);
+    return res.status(500).json({ error: 'Unable to process mock payment' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/payments/:id', authenticateToken, async (req, res) => {
+  if (!/^[1-9]\d*$/.test(req.params.id)) {
+    return res.status(400).json({ error: 'Invalid payment ID' });
+  }
+
+  try {
+    const result = await pool.query(
+      `SELECT id, booking_id, user_id, amount, currency,
+              status, payment_method, created_at
+       FROM payment_data.payments
+       WHERE id = $1`,
+      [req.params.id]
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    if (String(result.rows[0].user_id) !== req.authUserId) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    return res.json({ payment: result.rows[0], realPayment: false });
+  } catch (err) {
+    console.error('Payment lookup failed:', err.message);
+    res.status(500).json({ error: 'Unable to retrieve payment' });
+  }
+});
+
+async function start() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_data.payments (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      booking_id BIGINT NOT NULL,
+      user_id BIGINT NOT NULL,
+      amount NUMERIC(12,2) NOT NULL CHECK (amount >= 0),
+      currency CHAR(3) NOT NULL,
+      status VARCHAR(20) NOT NULL CHECK (status IN ('SUCCEEDED')),
+      payment_method VARCHAR(20) NOT NULL DEFAULT 'MOCK',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS payments_one_per_booking
+    ON payment_data.payments (booking_id)
+  `);
+
+  app.listen(PORT, () => {
+    console.log(`payment-service running on port ${PORT} (MOCK ONLY)`);
+  });
+}
+
+start().catch(err => {
+  console.error('Payment service startup failed:', err.message);
+  process.exit(1);
 });

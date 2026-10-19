@@ -1,0 +1,100 @@
+const express = require('express');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(express.json({ limit: '20kb' }));
+
+// Demo-only in-memory notification store
+const notifications = new Map();
+let nextId = 1;
+
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'UP',
+    service: 'notification-service',
+    mode: 'MOCK_ONLY'
+  });
+});
+
+app.get('/', (req, res) => {
+  res.json({
+    service: 'notification-service',
+    mode: 'MOCK_ONLY',
+    realEmailEnabled: false,
+    realSmsEnabled: false
+  });
+});
+
+// Create a mock booking confirmation notification
+app.post('/api/notifications', (req, res) => {
+  const { bookingId, userId, flightId, amount, currency } = req.body;
+
+  if (
+    !Number.isInteger(Number(bookingId)) ||
+    Number(bookingId) <= 0 ||
+    !Number.isInteger(Number(userId)) ||
+    Number(userId) <= 0
+  ) {
+    return res.status(400).json({
+      error: 'bookingId and userId must be positive integers'
+    });
+  }
+
+  const existingNotification = Array.from(notifications.values())
+    .find(n => n.bookingId === String(bookingId));
+
+  if (existingNotification) {
+    return res.status(200).json({
+      message: 'Existing notification returned; no duplicate created',
+      notification: existingNotification
+    });
+  }
+
+  const id = String(nextId++);
+  const notification = {
+    id,
+    bookingId: String(bookingId),
+    userId: String(userId),
+    flightId: flightId || null,
+    type: 'BOOKING_CONFIRMED',
+    channel: 'MOCK',
+    status: 'CREATED',
+    message: `Booking ${bookingId} confirmation notification generated`,
+    amount: amount ?? null,
+    currency: currency ?? null,
+    createdAt: new Date().toISOString(),
+    realEmailSent: false,
+    realSmsSent: false
+  };
+
+  notifications.set(id, notification);
+
+  return res.status(201).json({
+    message: 'Mock notification created; no email or SMS was sent',
+    notification
+  });
+});
+
+// List notifications (newest first)
+app.get('/api/notifications', (req, res) => {
+  res.json({
+    count: notifications.size,
+    notifications: Array.from(notifications.values()).reverse()
+  });
+});
+
+// Retrieve one notification
+app.get('/api/notifications/:id', (req, res) => {
+  const notification = notifications.get(req.params.id);
+
+  if (!notification) {
+    return res.status(404).json({ error: 'Notification not found' });
+  }
+
+  res.json({ notification });
+});
+
+app.listen(PORT, () => {
+  console.log(`notification-service running on port ${PORT} (MOCK ONLY)`);
+});

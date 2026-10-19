@@ -10,3 +10,6 @@ resources:
     cpu: 150m
     memory: 128Mi
 envSecretKey: "user_db_url"
+
+authSecretName: aerobook-auth-secret
+authSecretKey: JWT_SECRET

@@ -1,0 +1,21 @@
+# Dependencies and generated files
+node_modules/
+npm-debug.log*
+dist/
+coverage/
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*
+
+# Local backups
+*.before-*
+*.bak
+
+# Kubernetes secret manifests containing real values
+k8s/secrets/*.yaml
+k8s/secrets/*.yml

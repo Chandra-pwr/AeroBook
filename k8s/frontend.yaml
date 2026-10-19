@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aerobook-frontend
+  labels:
+    app: aerobook-frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aerobook-frontend
+  template:
+    metadata:
+      labels:
+        app: aerobook-frontend
+    spec:
+      containers:
+        - name: frontend
+          image: 099164519500.dkr.ecr.us-east-1.amazonaws.com/aero:frontend-v1
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aerobook-frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: aerobook-frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      protocol: TCP

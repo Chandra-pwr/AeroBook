@@ -29,13 +29,13 @@ pipeline {
                     ]
 
                     withCredentials([usernamePassword(credentialsId: DOCKERHUB_CREDENTIALS, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh "echo $DOCKER_PASS ert{} docker login -u$DOCKER_USER --password-stdin"
+                        sh 'echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin'
 
                         for (svc in services) {
                             def contextPath = (svc == 'frontend') ? './frontend' : "./services/${svc}"
                             def imageUri = "${DOCKER_REGISTRY}/${svc}:${IMAGE_TAG}"
 
-                            sh "docker build -t ${imageUri}${contextPath}"
+                            sh "docker build -t ${imageUri} ${contextPath}"
                             sh "docker push ${imageUri}"
                         }
                     }
