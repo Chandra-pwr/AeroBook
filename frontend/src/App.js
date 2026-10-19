@@ -554,7 +554,10 @@ const [bookingMessage, setBookingMessage] = useState('');
                     try {
                       const response = await fetch('/api/payments', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                          'Content-Type': 'application/json',
+                          Authorization: `Bearer ${authToken}`
+                        },
                         body: JSON.stringify({
                           bookingId: Number(createdBookingId)
                         })

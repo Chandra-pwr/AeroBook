@@ -1,4 +1,5 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const { Pool } = require('pg');
 
 const app = express();
@@ -20,6 +21,39 @@ const pool = new Pool({
   connectionTimeoutMillis: 5000,
   max: 10
 });
+
+
+function authenticateToken(req, res, next) {
+  const header = req.headers.authorization || '';
+  const match = header.match(/^Bearer\s+(\S+)$/i);
+
+  if (!match) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  if (!process.env.JWT_SECRET) {
+    console.error('JWT_SECRET is not configured');
+    return res.status(500).json({ error: 'Authentication is unavailable' });
+  }
+
+  try {
+    const payload = jwt.verify(match[1], process.env.JWT_SECRET, {
+      issuer: 'aerobook-user-service',
+      audience: 'aerobook-api'
+    });
+
+    if (typeof payload.sub !== 'string' || !/^[1-9]\d*$/.test(payload.sub)) {
+      return res.status(401).json({ error: 'Invalid authentication token' });
+    }
+
+    req.authUserId = payload.sub;
+    return next();
+  } catch (_) {
+    return res.status(401).json({
+      error: 'Invalid or expired authentication token'
+    });
+  }
+}
 
 app.get('/health', async (req, res) => {
   try {
@@ -67,7 +101,7 @@ async function createBookingNotification(booking, payment) {
   return response.json();
 }
 
-app.post('/api/payments', async (req, res) => {
+app.post('/api/payments', authenticateToken, async (req, res) => {
   const bookingId = Number(req.body.bookingId);
 
   if (!Number.isSafeInteger(bookingId) || bookingId < 1) {
@@ -95,6 +129,14 @@ app.post('/api/payments', async (req, res) => {
     }
 
     const booking = bookingResult.rows[0];
+
+    if (String(booking.user_id) !== req.authUserId) {
+      await client.query('ROLLBACK');
+      transactionStarted = false;
+      return res.status(403).json({
+        error: 'You cannot pay for this booking'
+      });
+    }
 
     if (booking.status === 'CANCELLED') {
       await client.query('ROLLBACK');
@@ -186,7 +228,7 @@ app.post('/api/payments', async (req, res) => {
   }
 });
 
-app.get('/api/payments/:id', async (req, res) => {
+app.get('/api/payments/:id', authenticateToken, async (req, res) => {
   if (!/^[1-9]\d*$/.test(req.params.id)) {
     return res.status(400).json({ error: 'Invalid payment ID' });
   }
@@ -204,7 +246,11 @@ app.get('/api/payments/:id', async (req, res) => {
       return res.status(404).json({ error: 'Payment not found' });
     }
 
-    res.json({ payment: result.rows[0], realPayment: false });
+    if (String(result.rows[0].user_id) !== req.authUserId) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
+    return res.json({ payment: result.rows[0], realPayment: false });
   } catch (err) {
     console.error('Payment lookup failed:', err.message);
     res.status(500).json({ error: 'Unable to retrieve payment' });
